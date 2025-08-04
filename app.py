@@ -15,9 +15,9 @@ def index():
 @app.route("/recommend", methods=["GET"])
 def recommend():
     filters = {
-        "бюджет": request.args.get("budget"),
-        "тип заведения": request.args.get("type"),
-        "кухня": request.args.get("cuisine"),
+        "Бюджет": request.args.get("budget"),
+        "Тип заведения": request.args.get("type"),
+        "Кухня": request.args.get("cuisine"),
         "атмосфера": request.args.get("atmosphere"),
         "повод": request.args.get("reason")
     }
@@ -27,8 +27,8 @@ def recommend():
 
     for key, value in filters.items():
         if value:
-            query += f" AND \"{key}\" ILIKE :{key}"
-            params[key] = f"%{value.strip()}%"
+            query += f' AND "{key}" ILIKE :{key.replace(" ", "_")}'
+            params[key.replace(" ", "_")] = f"%{value.strip()}%"
 
     with engine.connect() as conn:
         result = conn.execute(text(query), params)
@@ -49,12 +49,12 @@ def recommend():
         explanation = generate_ai_reason(item_clean, filters)
 
         formatted_item = {
-            "name": item_clean.get("название", "Ресторан без названия"),
-            "description": item_clean.get("описание"),
-            "address": item_clean.get("адрес"),
-            "metro": item_clean.get("метро"),
-            "photo": item_clean.get("фото"),
-            "link": item_clean.get("ссылка") or item_clean.get("сайт"),
+            "name": item_clean.get("Название", "Ресторан без названия"),
+            "description": item_clean.get("Описание"),
+            "address": item_clean.get("Адрес"),
+            "metro": item_clean.get("Метро"),
+            "photo": item_clean.get("Фото"),
+            "link": item_clean.get("Ссылка") or item_clean.get("Сайт"),
             "ai_reason": explanation
         }
 
@@ -65,16 +65,16 @@ def recommend():
 def generate_ai_reason(item, filters):
     parts = []
 
-    if filters.get("кухня") and filters["кухня"].lower() in (item.get("кухня") or "").lower():
-        parts.append(f"здесь готовят отличную {filters['кухня'].lower()} кухню")
+    if filters.get("Кухня") and filters["Кухня"].lower() in (item.get("Кухня") or "").lower():
+        parts.append(f"здесь готовят отличную {filters['Кухня'].lower()} кухню")
     if filters.get("атмосфера") and filters["атмосфера"].lower() in (item.get("атмосфера") or "").lower():
         parts.append(f"атмосфера — {filters['атмосфера'].lower()}")
     if filters.get("повод") and filters["повод"].lower() in (item.get("повод") or "").lower():
         parts.append(f"идеально подойдёт для: {filters['повод'].lower()}")
-    if filters.get("тип заведения") and filters["тип заведения"].lower() in (item.get("тип заведения") or "").lower():
-        parts.append(f"формат: {filters['тип заведения'].lower()}")
-    if filters.get("бюджет"):
-        parts.append(f"в пределах бюджета: {filters['бюджет'].lower()}")
+    if filters.get("Тип заведения") and filters["Тип заведения"].lower() in (item.get("Тип заведения") or "").lower():
+        parts.append(f"формат: {filters['Тип заведения'].lower()}")
+    if filters.get("Бюджет"):
+        parts.append(f"в пределах бюджета: {filters['Бюджет'].lower()}")
 
     if parts:
         return "Это место выбрано, потому что " + ", ".join(parts) + "."
