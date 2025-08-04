@@ -8,6 +8,10 @@ import random
 app = Flask(__name__)
 CORS(app)
 
+@app.route("/")  
+def index():
+    return "Сервис tg_miniapp работает! 🔥 Используйте /recommend для рекомендаций."
+
 @app.route("/recommend", methods=["GET"])
 def recommend():
     filters = {
@@ -77,5 +81,4 @@ def generate_ai_reason(item, filters):
     return "Это заведение точно стоит посетить — оно выделяется среди других."
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5001)
-
+    app.run(debug=True, host="0.0.0.0", port=5000)
