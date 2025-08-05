@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, Response
 from flask_cors import CORS
 from sqlalchemy import text
