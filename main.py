@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [BOT] %(levelname)s:
 logger = logging.getLogger(__name__)
 
 # ----------------- КОНФИГ -----------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # ОБЯЗАТЕЛЬНО задать в Railway Variables
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Задай в Railway → Variables
 API_URL = f"http://127.0.0.1:{os.environ.get('PORT', 5000)}/recommend"  # локально внутри сервиса
 
 user_state = {}
@@ -57,7 +57,7 @@ def build_keyboard(options, prefix, page=0, page_size=10):
     return InlineKeyboardMarkup(keyboard)
 
 async def fetch_api(url, params):
-    """Неблокирующий вызов requests.get через executor."""
+    """Неблокирующий requests.get + timeout."""
     loop = asyncio.get_running_loop()
     fn = functools.partial(requests.get, url, params=params, timeout=15)
     return await loop.run_in_executor(None, fn)
@@ -123,15 +123,21 @@ async def show_recommendations(query, filters):
         "reason": normalize(filters.get("reason"), reason_options)
     }
 
-    try:
-        response = await fetch_api(API_URL, params)
-        logger.info(f"➡️ Параметры запроса: {params}")
-        logger.info(f"📥 Ответ от API: {response.status_code} {response.text[:500]}")
-        data = response.json()
-    except Exception as e:
-        logger.error(f"Ошибка при запросе к API: {e}")
-        await query.edit_message_text("Ошибка при получении данных. Попробуйте позже.")
-        return
+    # 3 попытки на случай «сонного» контейнера/сети
+    for attempt in range(3):
+        try:
+            response = await fetch_api(API_URL, params)
+            logger.info(f"➡️ Запрос к API (попытка {attempt+1}/3): {params}")
+            logger.info(f"📥 Ответ от API: {response.status_code} {response.text[:500]}")
+            data = response.json()
+            break
+        except Exception as e:
+            logger.warning(f"Проблема с API (попытка {attempt+1}/3): {e}")
+            if attempt < 2:
+                await asyncio.sleep(2 * (attempt + 1))
+            else:
+                await query.edit_message_text("Ошибка при получении данных. Попробуйте позже.")
+                return
 
     if not data or (isinstance(data, dict) and data.get("message")):
         await query.edit_message_text("Ничего не нашлось по твоим критериям. Попробуй снова с другими настройками.")
@@ -177,22 +183,27 @@ async def show_recommendations(query, filters):
 
 # ----------------- СТАРТ ПРИЛОЖЕНИЯ -----------------
 async def on_startup(app):
-    # убираем webhook, чтобы polling не ловил 409
+    # Снять webhook, чтобы polling не ловил 409/Conflict
     await app.bot.delete_webhook(drop_pending_updates=True)
     logger.info("Webhook удалён, запускаю polling…")
 
-def main():
+def build_application():
     if not BOT_TOKEN:
         raise RuntimeError("Переменная окружения BOT_TOKEN не задана в Railway")
+    return (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(on_startup)   # корректная регистрация хука инициализации
+        .build()
+    )
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.post_init = on_startup  # выполнится перед стартом
-
+def main():
+    app = build_application()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callback))
-
     logger.info("Бот запущен…")
-    app.run_polling(allowed_updates=list())  # пустой список = все стандартные
+    # drop_pending_updates — на всякий случай чистим бэклог
+    app.run_polling(allowed_updates=list(), drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
