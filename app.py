@@ -27,7 +27,7 @@ def recommend():
 
     for key, value in filters.items():
         if value:
-            query += f' AND "{key}" ILIKE :{key.replace(" ", "_")}'
+            query += f' AND LOWER("{key}") LIKE :{key.replace(" ", "_")}'
             params[key.replace(" ", "_")] = f"%{value.strip()}%"
 
     with engine.connect() as conn:
