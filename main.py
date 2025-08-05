@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # ----------------- КОНФИГ -----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Задай в Railway → Variables
-API_URL = f"http://127.0.0.1:{os.environ.get('PORT', 5000)}/recommend"  # локально внутри сервиса
+API_URL = "http://127.0.0.1:8080/recommend"  # локально внутри сервиса (смотрим по логам Flask)
 
 user_state = {}
 
@@ -106,6 +106,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     if category == "reason":
+        # Логируем переход к рекомендациям
+        logger.info(f"➡️ Переход к рекомендациям. Состояние пользователя: {user_state[user_id]}")
         await show_recommendations(query, user_state[user_id])
         return
 
@@ -123,16 +125,18 @@ async def show_recommendations(query, filters):
         "reason": normalize(filters.get("reason"), reason_options)
     }
 
+    # Логируем сам вызов API
+    logger.info(f"🔎 Вызов show_recommendations, API_URL={API_URL}, params={params}")
+
     # 3 попытки на случай «сонного» контейнера/сети
     for attempt in range(3):
         try:
             response = await fetch_api(API_URL, params)
-            logger.info(f"➡️ Запрос к API (попытка {attempt+1}/3): {params}")
-            logger.info(f"📥 Ответ от API: {response.status_code} {response.text[:500]}")
+            logger.info(f"📬 Ответ от API (попытка {attempt+1}/3): {response.status_code} {response.text[:500]}")
             data = response.json()
             break
         except Exception as e:
-            logger.warning(f"Проблема с API (попытка {attempt+1}/3): {e}")
+            logger.warning(f"⚠️ Проблема с API (попытка {attempt+1}/3): {e}")
             if attempt < 2:
                 await asyncio.sleep(2 * (attempt + 1))
             else:
