@@ -1,25 +1,30 @@
+import os
 import logging
 import ast
+import asyncio
+import functools
 import requests
-from telegram import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
-)
+
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    ApplicationBuilder, CallbackContext, CommandHandler, CallbackQueryHandler
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
+
 from options import (
     budget_options, type_options, cuisine_options,
     atmosphere_options, reason_options
 )
 
-# Логирование
-logging.basicConfig(level=logging.INFO)
+# ----------------- ЛОГИ -----------------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [BOT] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-API_URL = "https://tg-miniapp-togj.onrender.com/recommend"
+# ----------------- КОНФИГ -----------------
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # ОБЯЗАТЕЛЬНО задать в Railway Variables
+API_URL = f"http://127.0.0.1:{os.environ.get('PORT', 5000)}/recommend"  # локально внутри сервиса
+
 user_state = {}
 
-# Карта опций
 category_options_map = {
     "budget": budget_options,
     "type": type_options,
@@ -28,7 +33,7 @@ category_options_map = {
     "reason": reason_options
 }
 
-# Нормализация значений
+# ----------------- УТИЛИТЫ -----------------
 def normalize(value, options_list):
     if not value:
         return value
@@ -37,23 +42,10 @@ def normalize(value, options_list):
             return opt
     return value
 
-# /start
-async def start(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_state[user_id] = {}
-    await update.message.reply_text(
-        "Привет! Давай подберём тебе ресторан. Сначала выбери бюджет:",
-        reply_markup=build_keyboard(budget_options, 'budget')
-    )
-
-# Пагинация клавиатуры
 def build_keyboard(options, prefix, page=0, page_size=10):
     start = page * page_size
     end = start + page_size
-    keyboard = [
-        [InlineKeyboardButton(opt, callback_data=f"{prefix}:{opt}")]
-        for opt in options[start:end]
-    ]
+    keyboard = [[InlineKeyboardButton(opt, callback_data=f"{prefix}:{opt}")] for opt in options[start:end]]
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"{prefix}_page:{page - 1}"))
@@ -64,8 +56,22 @@ def build_keyboard(options, prefix, page=0, page_size=10):
     keyboard.append([InlineKeyboardButton("🔁 Начать заново", callback_data="restart")])
     return InlineKeyboardMarkup(keyboard)
 
-# Обработка кнопок
-async def handle_callback(update: Update, context: CallbackContext):
+async def fetch_api(url, params):
+    """Неблокирующий вызов requests.get через executor."""
+    loop = asyncio.get_running_loop()
+    fn = functools.partial(requests.get, url, params=params, timeout=15)
+    return await loop.run_in_executor(None, fn)
+
+# ----------------- ХЕНДЛЕРЫ -----------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_state[user_id] = {}
+    await update.message.reply_text(
+        "Привет! Давай подберём тебе ресторан. Сначала выбери бюджет:",
+        reply_markup=build_keyboard(budget_options, 'budget')
+    )
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -79,8 +85,8 @@ async def handle_callback(update: Update, context: CallbackContext):
         )
         return
 
-    if '_page:' in data:
-        prefix, page = data.split('_page:')
+    if "_page:" in data:
+        prefix, page = data.split("_page:")
         page = int(page)
         await query.edit_message_text(
             f"Выбери {prefix}:",
@@ -106,8 +112,7 @@ async def handle_callback(update: Update, context: CallbackContext):
     msg, options, next_key = next_step[category]
     await query.edit_message_text(msg, reply_markup=build_keyboard(options, next_key))
 
-# Рекомендации
-MAX_CAPTION_LENGTH = 1024  # лимит Telegram
+MAX_CAPTION_LENGTH = 1024
 
 async def show_recommendations(query, filters):
     params = {
@@ -119,16 +124,16 @@ async def show_recommendations(query, filters):
     }
 
     try:
-        response = requests.get(API_URL, params=params)
+        response = await fetch_api(API_URL, params)
         logger.info(f"➡️ Параметры запроса: {params}")
-        logger.info(f"📥 Ответ от API: {response.status_code} {response.text}")
+        logger.info(f"📥 Ответ от API: {response.status_code} {response.text[:500]}")
         data = response.json()
     except Exception as e:
         logger.error(f"Ошибка при запросе к API: {e}")
         await query.edit_message_text("Ошибка при получении данных. Попробуйте позже.")
         return
 
-    if not data or "message" in data:
+    if not data or (isinstance(data, dict) and data.get("message")):
         await query.edit_message_text("Ничего не нашлось по твоим критериям. Попробуй снова с другими настройками.")
         return
 
@@ -139,18 +144,14 @@ async def show_recommendations(query, filters):
         if place.get("address"):
             text += f"📍 {place['address']}\n"
 
-        # Обработка метро — убрать квадратные скобки
         metro_raw = place.get("metro", "")
         try:
             metro_list = ast.literal_eval(metro_raw)
-            if isinstance(metro_list, list):
-                metro_str = ", ".join(metro_list)
-            else:
-                metro_str = str(metro_list)
+            metro_str = ", ".join(metro_list) if isinstance(metro_list, list) else str(metro_list)
         except Exception:
-            metro_str = metro_raw
-
-        text += f"🚇 {metro_str}\n"
+            metro_str = str(metro_raw) if metro_raw else "—"
+        if metro_str:
+            text += f"🚇 {metro_str}\n"
 
         if place.get("link"):
             text += f"<a href=\"{place['link']}\">Подробнее</a>\n"
@@ -158,7 +159,6 @@ async def show_recommendations(query, filters):
         reason = place.get("ai_reason") or "Подходит по выбранным параметрам."
         text += f"\n🤖 {reason}"
 
-        # Обрезаем подпись по длине, чтобы не было ошибки
         if len(text) > MAX_CAPTION_LENGTH:
             text = text[:MAX_CAPTION_LENGTH - 3] + "..."
 
@@ -168,19 +168,31 @@ async def show_recommendations(query, filters):
             await query.message.reply_photo(photo=photo, caption=text, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Ошибка отправки фото: {e}")
-            # Если ошибка — отправим просто текст без фото
             await query.message.reply_text(text, parse_mode="HTML")
 
     await query.message.reply_text(
         "Хочешь попробовать другой подбор? Нажми /start или кнопку ниже 👇",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔁 Начать заново", callback_data="restart")]
-        ])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Начать заново", callback_data="restart")]])
     )
-# Запуск
-if __name__ == "__main__":
-    app = ApplicationBuilder().token("8240440485:AAEPlsFOpm1aYRl9WWMmfx9Ltb2wI529BRQ").build()
+
+# ----------------- СТАРТ ПРИЛОЖЕНИЯ -----------------
+async def on_startup(app):
+    # убираем webhook, чтобы polling не ловил 409
+    await app.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Webhook удалён, запускаю polling…")
+
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("Переменная окружения BOT_TOKEN не задана в Railway")
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.post_init = on_startup  # выполнится перед стартом
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    logger.info("Бот запущен...")
-    app.run_polling()
+
+    logger.info("Бот запущен…")
+    app.run_polling(allowed_updates=list())  # пустой список = все стандартные
+
+if __name__ == "__main__":
+    main()
