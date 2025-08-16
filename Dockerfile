@@ -6,9 +6,10 @@ COPY . .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 5000
+# Railway сам пробросит PORT в контейнер
+ENV PORT=${PORT}
+EXPOSE ${PORT}
 
-ENV FLASK_APP=app.py
-ENV FLASK_RUN_HOST=0.0.0.0
+# Запуск через gunicorn (1 воркер, чтобы не терять user_state в памяти)
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:${PORT}", "--workers", "1", "--threads", "4", "--timeout", "60"]
 
-CMD ["flask", "run"]
